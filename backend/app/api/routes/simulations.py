@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends
 from app.api.deps import get_simulation_engine
 from app.schemas.decision import DecisionRequest, DecisionResponse
 from app.schemas.report import FinalReport
-from app.schemas.simulation import SimulationCreateRequest, SimulationCreateResponse, SimulationTelemetryRow
+from app.schemas.simulation import (
+    SimulationCreateRequest,
+    SimulationCreateResponse,
+    SimulationExplanationResponse,
+    SimulationTelemetryRow,
+)
 from app.services.simulation_engine import SimulationEngine
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
@@ -34,7 +39,7 @@ def submit_decision(
     payload: DecisionRequest,
     engine: SimulationEngine = Depends(get_simulation_engine),
 ) -> DecisionResponse:
-    outcome, state = engine.apply_decision(
+    outcome, state, decision_explanation = engine.apply_decision(
         simulation_id=simulation_id,
         event_id=payload.event_id,
         choice_id=payload.choice_id,
@@ -48,6 +53,7 @@ def submit_decision(
             state=state,
             next_event=None,
             final_report=engine.build_final_report(simulation_id),
+            decision_explanation=decision_explanation,
         )
 
     return DecisionResponse(
@@ -56,7 +62,17 @@ def submit_decision(
         outcome=outcome,
         state=state,
         next_event=engine.get_current_event(simulation_id),
+        decision_explanation=decision_explanation,
     )
+
+
+@router.get("/{simulation_id}/explanation", response_model=SimulationExplanationResponse)
+def get_simulation_explanation(
+    simulation_id: UUID,
+    engine: SimulationEngine = Depends(get_simulation_engine),
+) -> SimulationExplanationResponse:
+    explanation = engine.get_simulation_explanation(simulation_id)
+    return SimulationExplanationResponse(simulation_id=simulation_id, explanation=explanation)
 
 
 @router.get("/{simulation_id}/report", response_model=FinalReport)
@@ -73,4 +89,3 @@ def get_simulation_timeline(
     engine: SimulationEngine = Depends(get_simulation_engine),
 ):
     return engine.get_timeline(simulation_id)
-

@@ -76,3 +76,9 @@ class SimulationTelemetryRow(BaseModel):
     timing_score: int
     overall_score: int
     payload: dict
+
+
+class SimulationExplanationResponse(BaseModel):
+    simulation_id: UUID
+    explanation: str
+

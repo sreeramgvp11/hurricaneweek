@@ -1,4 +1,4 @@
-﻿from copy import deepcopy
+from copy import deepcopy
 from datetime import UTC, datetime
 from threading import Lock
 from uuid import UUID, uuid4
@@ -11,6 +11,7 @@ from app.schemas.report import FinalReport, FinancialSummary
 from app.schemas.simulation import PlayerProfile, ScoreState, SimulationState, StormState
 from app.services.consequence_engine import apply_choice_effects, apply_delayed_consequences
 from app.services.event_engine import STAGES, advance_stage, find_event_for_stage, get_storm_for_stage
+from app.services.gemini_service import GeminiService
 from app.services.scoring_engine import build_strengths_and_gaps, compute_scores, map_outcome
 from app.services.tiger_service import TigerService
 
@@ -63,9 +64,10 @@ class InMemorySimulationStore:
 
 
 class SimulationEngine:
-    def __init__(self, store: InMemorySimulationStore, tiger_service: TigerService) -> None:
+    def __init__(self, store: InMemorySimulationStore, tiger_service: TigerService, gemini_service: GeminiService) -> None:
         self.store = store
         self.tiger_service = tiger_service
+        self.gemini_service = gemini_service
 
     def create_simulation(self, player_profile: PlayerProfile) -> dict:
         return self.store.create(player_profile)
@@ -98,7 +100,7 @@ class SimulationEngine:
             simulation_complete=False,
         )
 
-    def apply_decision(self, simulation_id: UUID, event_id: str, choice_id: str) -> tuple[DecisionOutcome, SimulationState]:
+    def apply_decision(self, simulation_id: UUID, event_id: str, choice_id: str) -> tuple[DecisionOutcome, SimulationState, str | None]:
         state = self.store.get(simulation_id)
         if state["status"] != "active":
             raise HTTPException(status_code=409, detail="Simulation is already completed")
@@ -152,6 +154,15 @@ class SimulationEngine:
             },
         )
 
+        decision_explanation = self.gemini_service.explain_decision(
+            simulation_id=simulation_id,
+            event_id=event_id,
+            choice_id=choice_id,
+            state=state,
+            scores=scores_before_advance,
+            consequence=choice["consequence"],
+        )
+
         advance_stage(state)
         state["storm"] = get_storm_for_stage(state["stage"])
 
@@ -168,11 +179,23 @@ class SimulationEngine:
             timing_delta=choice.get("timing_delta", 0),
             cash_delta=choice.get("cash_delta", 0),
         )
-        return outcome, self._build_state_response(state)
+        return outcome, self._build_state_response(state), decision_explanation
 
     def get_timeline(self, simulation_id: UUID) -> list[dict]:
         self.store.get(simulation_id)
         return self.tiger_service.get_simulation_timeline(simulation_id)
+
+    def get_simulation_explanation(self, simulation_id: UUID) -> str:
+        state = self.store.get(simulation_id)
+        scores = compute_scores(state)
+        explanation = self.gemini_service.explain_current_state(
+            simulation_id=simulation_id,
+            state=state,
+            scores=scores,
+        )
+        if explanation is None:
+            raise HTTPException(status_code=503, detail="Gemini explanation unavailable")
+        return explanation
 
     def build_final_report(self, simulation_id: UUID) -> FinalReport:
         state = self.store.get(simulation_id)
@@ -183,7 +206,7 @@ class SimulationEngine:
         outcome = state.get("final_outcome") or map_outcome(scores)
         strengths, gaps, actions = build_strengths_and_gaps(state)
 
-        return FinalReport(
+        base_report = FinalReport(
             simulation_id=simulation_id,
             outcome=outcome,
             scores=ScoreState(**scores),
@@ -197,6 +220,9 @@ class SimulationEngine:
             action_identifiers=actions,
             decision_history=state["decision_history"],
         )
+
+        explanation = self.gemini_service.explain_final_report(base_report)
+        return base_report.model_copy(update={"explanation": explanation})
 
     def _build_state_response(self, state: dict) -> SimulationState:
         scores = compute_scores(state)

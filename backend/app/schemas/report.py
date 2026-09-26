@@ -11,6 +11,13 @@ class FinancialSummary(BaseModel):
     damage: int = Field(ge=0)
 
 
+class FinalReportExplanation(BaseModel):
+    what_you_did_well: str
+    what_exposed_you: str
+    top_preparedness_gaps: list[str]
+    preparedness_plan_48h: list[str]
+
+
 class FinalReport(BaseModel):
     simulation_id: UUID
     outcome: str
@@ -20,4 +27,4 @@ class FinalReport(BaseModel):
     preparedness_gaps: list[str]
     action_identifiers: list[str]
     decision_history: list[dict[str, str]]
-
+    explanation: FinalReportExplanation | None = None

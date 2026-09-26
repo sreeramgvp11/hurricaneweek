@@ -30,3 +30,4 @@ class DecisionResponse(BaseModel):
     state: SimulationState
     next_event: EventResponse | None
     final_report: FinalReport | None = None
+    decision_explanation: str | None = None
